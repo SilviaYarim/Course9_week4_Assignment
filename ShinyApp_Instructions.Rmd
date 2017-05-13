@@ -1,0 +1,303 @@
+---
+title: "Course9_Assignment_Shiny"
+author: "Silvia Benitez"
+date: "12/5/2017"
+output: html_document
+runtime: shiny
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+This R Markdown document is made interactive using Shiny.
+
+Please read the instructions to get started with the application.
+
+Once you have read the instructions please go to the following link to see the app in shiny server: 10.0.0.18:3838/ShinyApp_Assigment9/  
+
+
+## Monitoring Operating Time of CNC machine
+
+This shiny app show data from april 17th to 23th, 2017. You can select a date between that range and you will see some data plotted.
+
+You can also select the range of hours to select which data you want to see of the day. By default will also show two shifts from 7 to 15 and 15 to 23.
+
+The data was gotten from CNC machine of 4 plants: MTY (Monterrey), GDL (Guadalajara), QTO (Queretaro) and SALT (Saltillo). 
+Each plant has different machines; for example if you select MTY then you can select within 7 different CNC Machines, if you select GDL then you can select within 2 CNC machines and so on, this because all plants has different CNC machines.
+
+There are 4 tabsets, the first one display a graph which plot day`s hour against the total operating time that the machine was operating within each hour. For example on day april 21st, 2017 at 3 pm (hour = 15) the machine W11 from plant MTY it was not used at all.
+
+The second tabset, print two tables that show summary by machine and summary by plant comparing the operating time of each machine by the total shift hours (Tot_Hrs_Op/Tot_Hrs_Turnos) in porcentage between the date range that is selected by the user.
+
+The third and fourth tabsets, shows the data sets used for tabset 1 and 2.
+
+```{r, echo=FALSE, comment=NA, warning=FALSE,message=FALSE}
+library(RMySQL)
+library(ggplot2)
+library(plyr)
+library(plotly)
+library(dplyr)
+library(data.table)
+
+titlePanel("Production Control 3G")
+        sidebarLayout(
+                
+                sidebarPanel(
+                        conditionalPanel(
+                                'input.dataset === "Display Graph"',
+                        
+                        dateInput("date", label = ("Select a Date:"), value = "2017-04-21"),
+                        sliderInput("sliderTurnos","Select hours:",
+                                    0,23, value = c(7,23)), ##input that will be taken
+                        radioButtons("plant", label = ("Select a Plant:"), 
+                                    choices = c("MTY" = "MTY", "GDL" = "GDL", "QTO" = "QTO", 
+                                                   "SALT" = "SALT"),
+                                    selected = "MTY"),
+                        
+                        conditionalPanel(
+                        condition = "input.plant == 'GDL'",
+                        selectInput("G", label = ("Select a Machine from GDL:"), 
+                                    choices = c("W01" = "W01", "W02" = "W02"),
+                                    selected = "W01", multiple = FALSE)),
+                        
+                        conditionalPanel(
+                                condition = "input.plant == 'MTY'",
+                                selectInput("M", label = ("Select a Machine from MTY:"), 
+                                            choices = c("W03" = "W03", "W06" = "W06", "W07" = "W07",
+                                                        "W08" = "W08", "W09" = "W09", "W10" = "W10", 
+                                                        "W11" = "W11"),
+                                            selected = "W11", multiple = FALSE)),
+                        
+                        conditionalPanel(
+                        condition = "input.plant == 'QTO'",
+                        selectInput("Q", label = ("Select a Machine from QTO:"), 
+                                    choices = c("W04" = "W04"),
+                                    selected = "W04", multiple = FALSE)),
+                        
+                        conditionalPanel(
+                        condition = "input.plant == 'SALT'",
+                        selectInput("S", label = ("Select a Machine from SALT:"), 
+                                    choices = c("W11" = "W11"),
+                                    selected = "W11", multiple = FALSE))
+                ),
+                
+                conditionalPanel(
+                        'input.dataset === "Summary"',
+                        dateRangeInput("date2", label = ("Select a Date:"), 
+                                       start = "2017-04-17",
+                                       end = "2017-04-23",
+                                       format = "yyyy-mm-dd",
+                                       weekstart = 1)
+                        ##sliderInput("sliderTurnos2","Select hours:",
+                        ##            0,23, value = c(7,15)) ##input that will be taken
+                        
+                ),
+                
+                
+                conditionalPanel(
+                        'input.dataset === "Data OpTime"',
+                        dateRangeInput("date4", label = ("Select a Date:"),
+                                       start = "2017-04-17",
+                                       end = "2017-04-23", 
+                                       format = "yyyy-mm-dd",
+                                       weekstart = 1)
+                ),
+                
+                conditionalPanel(
+                        'input.dataset === "Data Turnos"',
+                        dateRangeInput("date5", label = ("Select a Date:"),
+                                       start = "2017-04-17",
+                                       end = "2017-04-23", 
+                                       format = "yyyy-mm-dd",
+                                       weekstart = 1)
+                )
+                
+                ),
+                mainPanel(
+                        tabsetPanel(
+                                id = 'dataset',
+                        tabPanel("Display Graph", plotlyOutput("plot")),
+                        tabPanel("Summary",h4("Summary by Machine"),tableOutput("summary"),
+                                 h4("Summary by Plant"), tableOutput("summaryplanta")),
+                        tabPanel("Data OpTime", tableOutput("data")),
+                        tabPanel("Data Turnos", tableOutput("dataturnos"))
+                        )
+                        
+                   
+                        
+                )
+                
+        )
+        
+        diasetdb <- dbConnect(MySQL(), user = "diaset", password = "diaset00", host = "201.134.41.123", 
+                      port = 3337, dbname = "diaset_dwh00")
+
+tb_agg <- dbGetQuery(diasetdb,"SELECT * FROM fact_optime_agg2")
+tb_turnos <- dbGetQuery(diasetdb,"SELECT * FROM fact_turnos_3g") 
+
+        ##Update the machine that correspond to each plant
+        machine <- reactive({switch(
+                input$plant,
+                "MTY" = input$M,
+                "GDL" = input$G,
+                "QTO" = input$Q,
+                "SALT" = input$S
+                
+        )})
+        
+        output$plot <- renderPlotly({
+                
+                Var_idDate<-input$date
+                t1 <- input$sliderTurnos[1]
+                t2 <- input$sliderTurnos[2]
+                tb_agg_0sub <- subset(tb_agg,tb_agg$plant==as.character(input$plant))
+                nrow(tb_agg_0sub)
+                tb_agg_sub <- subset(tb_agg_0sub,tb_agg_0sub$idmachine==machine())
+                nrow(tb_agg_sub)
+                ##tb_agg_sub$fecha<-as.Date(tb_agg_sub$fecha)
+                tb_agg_sub2<- tb_agg_sub[tb_agg_sub$fecha==as.Date(Var_idDate),]
+                nrow(tb_agg_sub2)
+                Hour <- tb_agg_sub2[,5]
+                OpTimePerHour <- (tb_agg_sub2[,6]/3600)
+                p <- ggplot(tb_agg_sub2, aes(x = Hour,y = OpTimePerHour))
+                p +geom_bar(stat = "identity", fill="#009E73", colour = "black") + 
+                        ggtitle("Machine Operating Time per Hour") + 
+                        xlab("Hour") + ylab ("optime") + theme_classic(base_size = 14) +
+                        scale_x_continuous(breaks=c(t1:t2), labels=c(t1:t2),limits=c(t1-1,t2))
+                
+        })
+        
+        ##Table that shows a summary by plant and idmachine
+        output$summary <- renderTable({
+                tb_agg$plant <- as.factor(tb_agg$plant)
+                tb_turnos$plant <- as.factor(tb_turnos$plant)
+                tb_agg$idmachine <- as.factor(tb_agg$idmachine)
+                tb_turnos$idmachine <- as.factor(tb_turnos$idmachine)
+                tb_agg$fecha <- as.Date(tb_agg$fecha)
+                tb_turnos$fecha <- as.Date(tb_turnos$fecha)
+                df <- select(tb_agg,plant:sum_machine_optime)
+                
+                tb_turnos_ord <- tb_turnos[,c(1,2,3,4,9,5,6,7,8)]
+                df_turnos <- select(tb_turnos_ord,plant:total_hrs)
+                
+                idDate<-as.Date(input$date2[2])
+                idDate2 <- as.Date(input$date2[1])
+                
+                ##new table with specific date
+                df <- df[(df$fecha >= as.Date(idDate2) & df$fecha <= as.Date(idDate)),] 
+                df_turnos <- df_turnos[(df_turnos$fecha >= as.Date(idDate2) & 
+                                                df_turnos$fecha <= as.Date(idDate)),] 
+                ##add another column to put optime in hrs round to 2 digits
+                df1 <- mutate(df, optime_hr = round((sum_machine_optime/3600),2))
+               
+                ##Group table by plant, idmachine,fecha and summarize optime_hr
+                df_3g <- df1 %>% group_by(plant,idmachine,fecha) %>% 
+                        summarise (Tot_Hrs_Op = sum(optime_hr))
+                
+                ##Merge the column Tot_Hrs_Op from table df_3g to table df_turnos
+                df_turnos <- data.table(df_turnos)
+                df_3g <- data.table(df_3g)
+                setkey(df_turnos,plant,idmachine,fecha)
+                setkey(df_3g,plant,idmachine,fecha)
+                df_3g_turnos <- merge(df_turnos, df_3g, all = TRUE)
+                
+                ##Group data by plant, idmachine and show table according date input in app
+                df_3G <- df_3g_turnos %>% group_by(plant,idmachine) %>% 
+                        summarise(Tot_Hrs_Turnos = sum(total_hrs,na.rm=TRUE), 
+                                        Tot_Hrs_Op = round((sum(Tot_Hrs_Op,na.rm=TRUE)),2))
+                
+                ##Table with Total de Horas operando y Porcentaje de las horas operando por planta y maquina
+                df_3G_1 <- mutate(df_3G, Porc_Op = round(((Tot_Hrs_Op/Tot_Hrs_Turnos)*100),2))
+                
+                df_3G_1
+                
+                
+                })
+        
+        ##Table that shows a summary by plant
+        output$summaryplanta <- renderTable({
+                tb_agg$plant <- as.factor(tb_agg$plant)
+                tb_turnos$plant <- as.factor(tb_turnos$plant)
+                tb_agg$idmachine <- as.factor(tb_agg$idmachine)
+                tb_turnos$idmachine <- as.factor(tb_turnos$idmachine)
+                tb_agg$fecha <- as.Date(tb_agg$fecha)
+                tb_turnos$fecha <- as.Date(tb_turnos$fecha)
+                df <- select(tb_agg,plant:sum_machine_optime)
+                
+                tb_turnos_ord <- tb_turnos[,c(1,2,3,4,9,5,6,7,8)]
+                df_turnos <- select(tb_turnos_ord,plant:total_hrs)
+                
+                idDate<-as.Date(input$date2[2])
+                idDate2 <- as.Date(input$date2[1])
+                ##idDate <- as.Date("2017-04-23")
+                ##idDate2 <- as.Date("2017-04-17")
+                
+                ##new table with specific date
+                df <- df[(df$fecha >= as.Date(idDate2) & df$fecha <= as.Date(idDate)),] 
+                df_turnos <- df_turnos[(df_turnos$fecha >= as.Date(idDate2) & 
+                                                df_turnos$fecha <= as.Date(idDate)),] 
+                ##add another column to put optime in hrs round to 2 digits
+                df1 <- mutate(df, optime_hr = round((sum_machine_optime/3600),2))
+                
+                ##Group table by plant, idmachine,fecha and summarize optime_hr
+                df_3g <- df1 %>% group_by(plant,idmachine,fecha) %>% 
+                        summarise (Tot_Hrs_Op = sum(optime_hr))
+                
+                ##Merge the column Tot_Hrs_Op from table df_3g to table df_turnos
+                df_turnos <- data.table(df_turnos)
+                df_3g <- data.table(df_3g)
+                setkey(df_turnos,plant,idmachine,fecha)
+                setkey(df_3g,plant,idmachine,fecha)
+                df_3g_turnos <- merge(df_turnos, df_3g, all = TRUE)
+                
+                ##Group data by plant, idmachine and show table according date input in app
+                df_3G <- df_3g_turnos %>% group_by(plant,idmachine) %>% 
+                        summarise(Tot_Hrs_Turnos = sum(total_hrs,na.rm=TRUE), 
+                                  Tot_Hrs_Op = round((sum(Tot_Hrs_Op,na.rm=TRUE)),2))
+                
+                ##Table with Total de Horas operando y Porcentaje de las horas operando por planta y maquina
+                df_3G_1 <- mutate(df_3G, Porc_Op = round(((Tot_Hrs_Op/Tot_Hrs_Turnos)*100),2))
+                
+                ##Table with Total de Horas operando y Porcentaje de las horas operando por planta
+                
+                df_3G_Tot <- df_3G_1 %>% group_by(plant) %>% summarise(Tot_Hrs_Op_plant = sum(Tot_Hrs_Op,na.rm=TRUE), 
+                                                Porc_Op_plant = round((mean(Porc_Op,na.rm=TRUE)),2))
+                
+                df_3G_Tot 
+                
+        })
+        
+        output$data <- renderTable({
+           
+                df <- select(tb_agg, plant:sum_machine_optime)
+                idDate<-as.Date(input$date4[2])
+                idDate2 <- as.Date(input$date4[1])
+                ##new table with specific date
+                df<- df[(df$fecha >= as.Date(idDate2) & df$fecha <= as.Date(idDate)),] 
+                df1 <- mutate(df, optime_hr = sum_machine_optime/3600)
+                df2 <- df1[,c(1,2,3,4,6,5)]
+                df3 <- select(df2,plant:optime_hr)
+                df4 <- arrange(df3, plant, idmachine,fecha,hour)
+                df4
+        })
+        
+        output$dataturnos <- renderTable({
+                
+                tb_turnos_ord <- tb_turnos[,c(1,2,3,4,9,5,6,7,8)]
+                df_turnos <- select(tb_turnos_ord,plant:total_hrs)
+                idDate<-as.Date(input$date5[2])
+                idDate2 <- as.Date(input$date5[1])
+                ##new table with specific date
+                df_turnos1<- df_turnos[(df_turnos$fecha >= as.Date(idDate2) & 
+                                             df_turnos$fecha <= as.Date(idDate)),] 
+                df_turnos2 <- arrange(df_turnos1,plant,idmachine,fecha)
+                df_turnos2
+        })
+
+```
+
+
+
+
+
