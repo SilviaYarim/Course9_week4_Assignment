@@ -1,0 +1,159 @@
+---
+title       : "Data Analytics Based in the Model Industry 4.0"
+subtitle    : "Improving implementation of Lean Manufacturing"
+author      : "Silvia Benitez"
+job         : 
+framework   : io2012        # {io2012, html5slides, shower, dzslides, ...}
+highlighter : highlight.js  # {highlight.js, prettify, highlight}
+hitheme     : tomorrow      # 
+widgets     : [mathjax, quiz, bootstrap, interactive]            # {mathjax, quiz, bootstrap}
+mode        : selfcontained # {standalone, draft}
+knit        : slidify::knit2slides
+logo: logo Wisdom-BI.png
+biglogo: logo Wisdom-BI.png
+---
+
+
+## **Abstract**
+
+One of the challenges of the manufacturing industry is the implementation of Lean Manufacturing Methodology on the production floor. The objective of this research is to measure the operating time of the CNC machines located in different cities from Mexico by using advance data analytics based on the model of Industry 4.0 to evaluate machine dead times and the percentage of operation per machine and plant.
+
+
+
+---.class #id
+
+
+
+
+## **Objective**
+
+The main objective is to generate strategic knowledge that allows them to improve planning in the use of the machine and shifts of the personnel according to the estimated production to reduce cost of electricity consumption and workforce hours.
+
+
+---.class #id
+
+
+## **Methodology** 
+
+The following image shows the Methodology of the model that we used to get the app. As you can see we collect data from the CNC machines, which is stored in MySQL locally, then by the ETL process (Extraction, Transformation and Load) we send a table with all information needed to feed the Shiny App.
+
+
+<div style ='text-align: center;'>
+        <img height='1000' src='System.png' />
+        </div>
+
+
+---.class #id
+
+## **Plot**
+
+<div style = 'text-align: center;'/>
+<div/>
+
+This plot shows two shifts of the machine **W11** from plant **MTY**. As you can see easily any Manager can see that this machine was not used at 3 pm, 9 pm, 10 pm and 11 pm. Four hours without working.
+
+This graph can be gotten in the Shiny app, and the user can choose: Date, Hours, Plant and machines.
+
+```{r, echo=FALSE, comment=NA, warning=FALSE,message=FALSE}
+
+library(RMySQL)
+library(ggplot2)
+library(plyr)
+library(plotly)
+library(dplyr)
+library(data.table)
+
+ diasetdb <- dbConnect(MySQL(), user = "diaset", password = "diaset00", host = "201.134.41.123", 
+                      port = 3337, dbname = "diaset_dwh00")
+
+tb_agg <- dbGetQuery(diasetdb,"SELECT * FROM fact_optime_agg2")
+tb_turnos <- dbGetQuery(diasetdb,"SELECT * FROM fact_turnos_3g") 
+
+
+                Var_idDate<-"2017-04-21"
+                t1 <- 7
+                t2 <- 23
+                tb_agg_sub <- subset(tb_agg,tb_agg$plant=="MTY")
+                ##nrow(tb_agg_sub)
+                tb_agg_sub <- subset(tb_agg_sub,tb_agg_sub$idmachine==as.character("W11"))
+                ##nrow(tb_agg_sub)
+                tb_agg_sub2<- tb_agg_sub[tb_agg_sub$fecha==as.Date(Var_idDate),]
+                ##nrow(tb_agg_sub2)
+                Hour <- tb_agg_sub2[,5]
+                OpTimePerHour <- (tb_agg_sub2[,6]/3600)
+                p <- ggplot(tb_agg_sub2, aes(x = Hour,y = OpTimePerHour))
+                p +geom_bar(stat = "identity", fill="#009E73", colour = "black") + 
+                        ggtitle("Machine Operating Time per Hour") + 
+                        xlab("Hour") + ylab ("optime") + theme_classic(base_size = 14) +
+                        scale_x_continuous(breaks=c(t1:t2), labels=c(t1:t2),limits=c(t1-1,t2))
+
+```
+
+
+---.class #id
+
+## **Summary Table**
+
+This table shows the Operating Percentage per machine from 2017-04-17 to 2017-04-23. This table can be gotten from Shiny App and the user can use the range of time. With this table Manager can see as overal what is the operating time of their machines.
+
+```{r, echo=FALSE, comment=NA, warning=FALSE,message=FALSE}
+library(RMySQL)
+library(ggplot2)
+library(plyr)
+library(plotly)
+library(dplyr)
+library(data.table)
+
+ diasetdb <- dbConnect(MySQL(), user = "diaset", password = "diaset00", host = "201.134.41.123", 
+                      port = 3337, dbname = "diaset_dwh00")
+
+tb_agg <- dbGetQuery(diasetdb,"SELECT * FROM fact_optime_agg2")
+tb_turnos <- dbGetQuery(diasetdb,"SELECT * FROM fact_turnos_3g") 
+
+                tb_agg$plant <- as.factor(tb_agg$plant)
+                tb_turnos$plant <- as.factor(tb_turnos$plant)
+                tb_agg$idmachine <- as.factor(tb_agg$idmachine)
+                tb_turnos$idmachine <- as.factor(tb_turnos$idmachine)
+                tb_agg$fecha <- as.Date(tb_agg$fecha)
+                tb_turnos$fecha <- as.Date(tb_turnos$fecha)
+                df <- select(tb_agg,plant:sum_machine_optime)
+                
+                tb_turnos_ord <- tb_turnos[,c(1,2,3,4,9,5,6,7,8)]
+                df_turnos <- select(tb_turnos_ord,plant:total_hrs)
+                
+                idDate<-as.Date("2017-04-23")
+                idDate2 <- as.Date("2017-04-17")
+                
+                ##new table with specific date
+                df <- df[(df$fecha >= as.Date(idDate2) & df$fecha <= as.Date(idDate)),] 
+                df_turnos <- df_turnos[(df_turnos$fecha >= as.Date(idDate2) & 
+                                                df_turnos$fecha <= as.Date(idDate)),] 
+                ##add another column to put optime in hrs round to 2 digits
+                df1 <- mutate(df, optime_hr = round((sum_machine_optime/3600),2))
+               
+                ##Group table by plant, idmachine,fecha and summarize optime_hr
+                df_3g <- df1 %>% group_by(plant,idmachine,fecha) %>% 
+                        summarise (Tot_Hrs_Op = sum(optime_hr))
+                
+                ##Merge the column Tot_Hrs_Op from table df_3g to table df_turnos
+                df_turnos <- data.table(df_turnos)
+                df_3g <- data.table(df_3g)
+                setkey(df_turnos,plant,idmachine,fecha)
+                setkey(df_3g,plant,idmachine,fecha)
+                df_3g_turnos <- merge(df_turnos, df_3g, all = TRUE)
+                
+                ##Group data by plant, idmachine and show table according date input in app
+                df_3G <- df_3g_turnos %>% group_by(plant,idmachine) %>% 
+                        summarise(Tot_Hrs_Turnos = sum(total_hrs,na.rm=TRUE), 
+                                        Tot_Hrs_Op = round((sum(Tot_Hrs_Op,na.rm=TRUE)),2))
+                
+                ##Table with Total de Horas operando y Porcentaje de las horas operando por planta y maquina
+                df_3G_1 <- mutate(df_3G, Porc_Op = round(((Tot_Hrs_Op/Tot_Hrs_Turnos)*100),2))
+                
+                df_3G_2 <- select(df_3G_1, plant,idmachine,Porc_Op)
+                
+                df_3G_2
+
+
+
+```
